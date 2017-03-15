@@ -151,7 +151,7 @@ class LogStash::Filters::Metrics < LogStash::Filters::Base
   config :percentiles, :validate => :array, :default => [1, 5, 10, 90, 95, 99, 100]
 
   # If the metrics should be split into separate events
-  config :split_metrics, :validate => :boolean, :default => false
+  config :split_metrics, :validate => :string
 
   def register
     require "metriks"
@@ -194,13 +194,25 @@ class LogStash::Filters::Metrics < LogStash::Filters::Base
     event
   end # def make_event
 
-  def get_event(events)
-    if split_metrics or events.empty?
+  def get_event(events, name)
+    if @split_metrics
+      event = make_event
+      event.set(@split_metrics, name)
+      events << event
+    elsif events.empty?
       events << make_event
     end
 
     events.last
   end # def get_event
+
+  def prefix(name)
+    if @split_metrics
+      prefix = ""
+    else
+      prefix = "[#{name}]"
+    end
+  end
 
   def flush(options = {})
     # Add 5 seconds to @last_flush and @last_clear counters
@@ -213,22 +225,24 @@ class LogStash::Filters::Metrics < LogStash::Filters::Base
 
     events = []
     @metric_meters.each_pair do |name, metric|
-      flush_rates get_event(events), name, metric
+      prefix = prefix(name)
+      flush_rates get_event(events, name), prefix, metric
       metric.clear if should_clear?
     end
 
     @metric_timers.each_pair do |name, metric|
-      event = get_event(events)
-      flush_rates event, name, metric
+      prefix = prefix(name)
+      event = get_event(events, name)
+      flush_rates event, prefix, metric
       # These 4 values are not sliding, so they probably are not useful.
-      event.set("[#{name}][min]", metric.min)
-      event.set("[#{name}][max]", metric.max)
+      event.set("#{prefix}[min]", metric.min)
+      event.set("#{prefix}[max]", metric.max)
       # timer's stddev currently returns variance, fix it.
-      event.set("[#{name}][stddev]", metric.stddev ** 0.5)
-      event.set("[#{name}][mean]", metric.mean)
+      event.set("#{prefix}[stddev]", metric.stddev ** 0.5)
+      event.set("#{prefix}[mean]", metric.mean)
 
       @percentiles.each do |percentile|
-        event.set("[#{name}][p#{percentile}]", metric.snapshot.value(percentile / 100.0))
+        event.set("#{prefix}[p#{percentile}]", metric.snapshot.value(percentile / 100.0))
       end
       metric.clear if should_clear?
     end
@@ -260,11 +274,11 @@ class LogStash::Filters::Metrics < LogStash::Filters::Base
 
   private
 
-  def flush_rates(event, name, metric)
-      event.set("[#{name}][count]", metric.count)
-      event.set("[#{name}][rate_1m]", metric.one_minute_rate) if @rates.include? 1
-      event.set("[#{name}][rate_5m]", metric.five_minute_rate) if @rates.include? 5
-      event.set("[#{name}][rate_15m]", metric.fifteen_minute_rate) if @rates.include? 15
+  def flush_rates(event, prefix, metric)
+      event.set("#{prefix}[count]", metric.count)
+      event.set("#{prefix}[rate_1m]", metric.one_minute_rate) if @rates.include? 1
+      event.set("#{prefix}[rate_5m]", metric.five_minute_rate) if @rates.include? 5
+      event.set("#{prefix}[rate_15m]", metric.fifteen_minute_rate) if @rates.include? 15
   end
 
   def metric_key(key)

@@ -68,7 +68,7 @@ describe LogStash::Filters::Metrics do
 
       context "[split_metrics] on the first flush" do
         subject {
-          config = {"meter" => ["http_%{response}"], "split_metrics" => true}
+          config = {"meter" => ["http_%{response}"], "split_metrics" => "metric"}
           filter = LogStash::Filters::Metrics.new config
           filter.register
           filter.filter LogStash::Event.new({"response" => 200})
@@ -79,24 +79,24 @@ describe LogStash::Filters::Metrics do
 
         it "should flush counts in separate messages" do
           insist { subject.length } == 2
-          reject { subject.first.get("http_200") }.nil?
-          insist { subject.first.get("http_200")["count"] } == 2
-          reject { subject.last.get("http_404") }.nil?
-          insist { subject.last.get("http_404")["count"] } == 1
+          counts = { "http_200" => 2, "http_404" => 1}
+          subject.each do |event|
+            insist { subject.first.get("count") } == counts[subject.first.get("metric")]
+          end
         end
 
-        def insist_metric_has_field(event, name, metrics)
-          reject { event.get(name) }.nil?
+        def insist_metric_has_field(event,  metrics)
           metrics.each do |metric|
-            insist { event.get(name) }.include? metric
+            reject { event.get(metric) }.nil?
           end
         end
 
         it "should include rates and percentiles in separate messages" do
           insist { subject.length } == 2
           metrics = ["rate_1m", "rate_5m", "rate_15m"]
-          insist_metric_has_field(subject.first, "http_200", metrics)
-          insist_metric_has_field(subject.last, "http_404", metrics)
+          subject.each do |event|
+            insist_metric_has_field(event, metrics)
+          end
         end
       end
     end
